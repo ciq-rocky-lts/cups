@@ -7,6 +7,13 @@
 # but we use lib for compatibility with 3rd party drivers (at upstream request).
 %global cups_serverbin %{_exec_prefix}/lib/cups
 
+# we still need something for python2...
+%if 0%{?rhel} >= 8 || 0%{?fedora}
+%global __python %{__python3}
+%else
+%global __python /usr/bin/python2
+%endif
+
 #%%global prever rc1
 #%%global VERSION %%{version}%%{prever}
 %global VERSION %{version}
@@ -15,7 +22,7 @@ Summary: CUPS printing system
 Name: cups
 Epoch: 1
 Version: 2.2.6
-Release: 51%{?dist}
+Release: 62%{?dist}
 License: GPLv2+ and LGPLv2 with exceptions and AML
 Url: http://www.cups.org/
 Source0: https://github.com/apple/cups/releases/download/v%{VERSION}/cups-%{VERSION}-source.tar.gz
@@ -26,6 +33,8 @@ Source6: cups.logrotate
 # Backend for NCP protocol
 Source7: ncp.backend
 Source8: macros.cups
+# CVE-2023-32360 migration script
+Source9: upgrade_get_document.py.in
 
 Patch1: cups-no-gzip-man.patch
 Patch2: cups-system-auth.patch
@@ -143,6 +152,45 @@ Patch77: cups-retry-current-job-man.patch
 Patch78: 0001-Update-man-pages-for-h-option-Issue-357.patch
 # 2130391 - Kerberized IPP Printing Fails
 Patch79: cups-kerberos.patch
+# 2217178 - Delays printing to lpd when reserved ports are exhausted
+Patch80: 0001-Fix-delays-printing-to-lpd-when-reserved-ports-are-e.patch
+# 2217283 - The command "cancel -x <job>" does not remove job files
+Patch81: 0001-Use-purge-job-instead-of-purge-jobs-when-canceling-a.patch
+# 2217955 - Enlarge backlog queue for listen() in cupsd
+Patch82: 0001-cups-http-addr.c-Set-listen-backlog-size-to-INT_MAX-.patch
+# CVE-2023-34241 cups: use-after-free in cupsdAcceptClient() in scheduler/client.c
+Patch83: 0001-Log-result-of-httpGetHostname-BEFORE-closing-the-con.patch
+# CVE-2023-32324 cups: heap buffer overflow may lead to DoS
+Patch84: 0001-cups-strlcpy-handle-zero-size.patch
+# CVE-2023-32360 cups:  Information leak through Cups-Get-Document operation
+Patch85: 0001-Require-authentication-for-CUPS-Get-Document.patch
+# RHEL-14933 cupsd memory leak in cupsdDeleteJob() with "PreserveJobHistory Off"
+Patch86: cups-preservejob-leak.patch
+# RHEL-15309 cupsd fails to open cups-files.conf and the resulting error message is lost
+Patch87: 0001-scheduler-conf.c-Print-to-stderr-if-we-don-t-open-cu.patch
+# RHEL-10702 cupsGetJobs fails to connect if poll() gets POLLOUT|POLLHUP in revents
+Patch88: 0001-httpAddrConnect2-Check-for-error-if-POLLHUP-is-in-va.patch
+# RHEL-40386 CVE-2024-35235 cups: Cupsd Listen arbitrary chmod 0140777
+# https://github.com/OpenPrinting/cups/commit/a436956
+Patch89: 0001-Fix-domain-socket-handling.patch
+# RHEL-40386 CVE-2024-35235 cups: Cupsd Listen arbitrary chmod 0140777
+# https://github.com/OpenPrinting/cups/pull/31
+Patch90: cups-require-cups-socket.patch
+# RHEL-40386 CVE-2024-35235 cups: Cupsd Listen arbitrary chmod 0140777
+# https://github.com/OpenPrinting/cups/commit/3448c52
+Patch91: cups-socket-remove-on-stop.patch
+# RHEL-40386 CVE-2024-35235 cups: Cupsd Listen arbitrary chmod 0140777
+# https://github.com/OpenPrinting/cups/commit/7adb508
+# https://github.com/OpenPrinting/cups/commit/824f49f
+# https://github.com/OpenPrinting/cups/commit/56b9728
+# https://github.com/OpenPrinting/cups/commit/74f437b
+# https://github.com/OpenPrinting/cups/commit/fb0c914
+Patch92: cups-check-for-listeners.patch
+# RHEL-60338 CVE-2024-47175 cups: remote command injection via attacker controlled data in PPD file
+Patch93: 0001-mirror-ipp-everywhere-printer-changes-from-master.patch
+Patch94: 0001-refactor-make-and-model-code.patch
+Patch95: 0001-ppdize-preset-and-template-names.patch
+Patch96: 0001-Fix-make-and-model-whitespace-trimming-Issue-1096.patch
 
 Patch1000: cups-lspp.patch
 
@@ -188,6 +236,9 @@ Requires(post): systemd
 Requires(post): grep, sed
 Requires(preun): systemd
 Requires(postun): systemd
+
+# for upgrade-get-document script
+Requires(post): %{__python}
 
 # We ship udev rules which use setfacl.
 Requires: systemd
@@ -429,6 +480,46 @@ Sends IPP requests to the specified URI and tests and/or displays the results.
 %patch78 -p1 -b .manpage-update
 # 2130391 - Kerberized IPP Printing Fails
 %patch79 -p1 -b .kerberos
+# 2217178 - Delays printing to lpd when reserved ports are exhausted
+%patch80 -p1 -b .lpd-delay
+# 2217283 - The command "cancel -x <job>" does not remove job files
+%patch81 -p1 -b .purge-job
+# 2217955 - Enlarge backlog queue for listen() in cupsd
+%patch82 -p1 -b .listen-backlog
+# CVE-2023-34241 cups: use-after-free in cupsdAcceptClient() in scheduler/client.c
+%patch83 -p1 -b .cve34241
+# CVE-2023-32324 cups: heap buffer overflow may lead to DoS
+%patch84 -p1 -b .cve32324
+# CVE-2023-32360 cups: Information leak through Cups-Get-Document operation
+%patch85 -p1 -b .get-document-auth
+# RHEL-14933 cupsd memory leak in cupsdDeleteJob() with "PreserveJobHistory Off"
+%patch86 -p1 -b .preservejob-leak
+# RHEL-15309 cupsd fails to open cups-files.conf and the resulting error message is lost
+%patch87 -p1 -b .message-stderr
+# RHEL-10702 cupsGetJobs fails to connect if poll() gets POLLOUT|POLLHUP in revents
+%patch88 -p1 -b .cupsgetjobs-pollhup
+# RHEL-40386 CVE-2024-35235 cups: Cupsd Listen arbitrary chmod 0140777
+# https://github.com/OpenPrinting/cups/commit/a436956
+%patch89 -p1 -b .cve2024-35235
+# RHEL-40386 CVE-2024-35235 cups: Cupsd Listen arbitrary chmod 0140777
+# https://github.com/OpenPrinting/cups/pull/31
+%patch90 -p1 -b .cups-require-cups-socket
+# RHEL-40386 CVE-2024-35235 cups: Cupsd Listen arbitrary chmod 0140777
+# https://github.com/OpenPrinting/cups/commit/3448c52
+%patch91 -p1 -b .cups-remove-on-stop
+# RHEL-40386 CVE-2024-35235 cups: Cupsd Listen arbitrary chmod 0140777
+# https://github.com/OpenPrinting/cups/commit/7adb508
+# https://github.com/OpenPrinting/cups/commit/824f49f
+# https://github.com/OpenPrinting/cups/commit/56b9728
+# https://github.com/OpenPrinting/cups/commit/74f437b
+# https://github.com/OpenPrinting/cups/commit/fb0c914
+%patch92 -p1 -b .cups-check-for-listeners
+# RHEL-60338 CVE-2024-47175 cups: remote command injection via attacker controlled data in PPD file
+%patch93 -p1 -b .ippeve-validate
+%patch94 -p1 -b .make-model-refact
+%patch95 -p1 -b .ppdize-presets
+%patch96 -p1 -b .make-model-trim
+
 
 sed -i -e '1iMaxLogSize 0' conf/cupsd.conf.in
 
@@ -578,6 +669,11 @@ s:.*\('%{_datadir}'/\)\([^/_]\+\)\(.*\.po$\):%lang(\2) \1\2\3:
 /^\([^%].*\)/d
 ' > %{name}.lang
 
+# install get-document upgrade script
+install -m 0755 %{SOURCE9} %{buildroot}%{_sbindir}/upgrade_get_document
+
+sed -i 's,@PYTHON_SHEBANG@,#!%{__python},' %{buildroot}%{_sbindir}/upgrade_get_document
+
 %post
 %systemd_post %{name}.path %{name}.socket %{name}.service
 
@@ -639,6 +735,8 @@ fi
 # user had changed the config file)
 grep '^\s*IdleExitTimeout' %{_sysconfdir}/cups/cupsd.conf &> /dev/null || echo -e '\nIdleExitTimeout 0' \
 >> %{_sysconfdir}/cups/cupsd.conf
+
+%{_sbindir}/upgrade_get_document
 
 exit 0
 
@@ -848,6 +946,52 @@ rm -f %{cups_serverbin}/backend/smb
 %{_mandir}/man5/ipptoolfile.5.gz
 
 %changelog
+* Fri Oct 25 2024 Zdenek Dohnal <zdohnal@redhat.com> - 1:2.2.6-62
+- RHEL-60338 CVE-2024-47175 cups: remote command injection via attacker controlled data in PPD file
+
+* Thu Aug 15 2024 Zdenek Dohnal <zdohnal@redhat.com> - 1:2.2.6-61
+- RHEL-54038 cups source rpm doesn't actually build lspp support
+- fix memory leaks caused by lspp
+
+* Tue Jun 18 2024 Pavol Zacik <pzacik@redhat.com>  - 1:2.2.6-60
+- RHEL-40386 cups: Cupsd Listen arbitrary chmod 0140777
+- Delete the domain socket file after stopping the cups.socket service
+- Fix cupsd Listener checks
+
+* Fri Jun 14 2024 Pavol Zacik <pzacik@redhat.com> - 1:2.2.6-59
+- RHEL-40386 cups: Cupsd Listen arbitrary chmod 0140777
+- Require cups.socket in cupsd service file
+
+* Mon Jun 10 2024 Pavol Zacik <pzacik@redhat.com> - 1:2.2.6-58
+- CVE-2024-35235 cups: Cupsd Listen arbitrary chmod 0140777
+
+* Mon Feb 26 2024 Zdenek Dohnal <zdohnal@redhat.com> - 1:2.2.6-57
+- revert RHEL-19200 - no new subpackages are needed
+
+* Wed Dec 20 2023 Zdenek Dohnal <zdohnal@redhat.com> - 1:2.2.6-56
+- RHEL-10702 cupsGetJobs fails to connect if poll() gets POLLOUT|POLLHUP in revents
+- RHEL-19200 Recommend new cups-filters subpackages with weak dep for better upgrade exp
+
+* Fri Nov 03 2023 Zdenek Dohnal <zdohnal@redhat.com> - 1:2.2.6-55
+- RHEL-14933 cupsd memory leak in cupsdDeleteJob() with "PreserveJobHistory Off"
+- RHEL-15309 cupsd fails to open cups-files.conf and the resulting error message is lost
+
+* Tue Sep 12 2023 Zdenek Dohnal <zdohnal@redhat.com> - 1:2.2.6-54
+- RHEL-2612 - cups pulls an unneeded dependency on python3
+
+* Tue Aug 29 2023 Zdenek Dohnal <zdohnal@redhat.com> - 1:2.2.6-53
+- CVE-2023-32360 cups: Information leak through Cups-Get-Document operation
+
+* Thu Jun 29 2023 Zdenek Dohnal <zdohnal@redhat.com> - 1:2.2.6-52
+- 2217178 - Delays printing to lpd when reserved ports are exhausted
+- 2217283 - The command "cancel -x <job>" does not remove job files
+- 2217955 - Enlarge backlog queue for listen() in cupsd
+- CVE-2023-34241 cups: use-after-free in cupsdAcceptClient() in scheduler/client.c
+- CVE-2023-32324 cups: heap buffer overflow may lead to DoS
+
+* Mon Apr 03 2023 Zdenek Dohnal <zdohnal@redhat.com> - 1:2.2.6-51
+- RHEL-316 - Enable fmf tests in centos stream
+
 * Wed Dec 14 2022 Zdenek Dohnal <zdohnal@redhat.com> - 1:2.2.6-51
 - 2130391 - Kerberized IPP Printing Fails
 
